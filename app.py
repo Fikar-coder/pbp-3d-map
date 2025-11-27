@@ -2,121 +2,198 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
+from scipy.interpolate import griddata # Library baru untuk bikin garis kontur halus
 
-# Set page config
-st.set_page_config(page_title="3D Subsurface Visualization", layout="wide")
+# Konfigurasi Halaman
+st.set_page_config(page_title="Manual Contour Viz", layout="wide")
 
-st.title("3D Subsurface Visualization (GOC & WOC)")
-st.markdown("Upload your CSV or Excel file to visualize GOC and WOC surfaces in 3D.")
+st.title("Peta Struktur & Kontak Fluida (Kontur)")
+st.markdown("Input titik koordinat, dan sistem akan membuat **Garis Kontur** secara otomatis.")
 
-# Sidebar for controls
-st.sidebar.header("Data Settings")
+# --- 1. INISIALISASI SESSION STATE ---
+if 'data_points' not in st.session_state:
+    st.session_state['data_points'] = []
 
-# File uploader
-uploaded_file = st.sidebar.file_uploader("Upload Data (CSV/Excel)", type=["csv", "xlsx"])
+# --- 2. SIDEBAR: INPUT DATA ---
+st.sidebar.header("1. Input Data")
 
-def load_data(file):
-    if file.name.endswith('.csv'):
-        return pd.read_csv(file)
+with st.sidebar.form(key='input_form'):
+    col1, col2 = st.columns(2)
+    with col1:
+        x_val = st.number_input("X (Koordinat)", value=0.0)
+    with col2:
+        y_val = st.number_input("Y (Koordinat)", value=0.0)
+    
+    z_val = st.number_input("Z (Kedalaman/Depth)", value=1000.0)
+    
+    submit_button = st.form_submit_button(label='➕ Tambah Titik')
+
+if submit_button:
+    st.session_state['data_points'].append({'X': x_val, 'Y': y_val, 'Z': z_val})
+    st.sidebar.success(f"Titik ({x_val}, {y_val}, {z_val}) masuk!")
+
+# Tombol Reset & Demo
+c_b1, c_b2 = st.sidebar.columns(2)
+if c_b1.button("Hapus Data"):
+    st.session_state['data_points'] = []
+    st.rerun()
+
+if c_b2.button("Load Data Demo"):
+    # Data Anticline (Kubah) yang lebih banyak biar konturnya bagus
+    st.session_state['data_points'] = [
+        {'X': 100, 'Y': 100, 'Z': 1300}, {'X': 300, 'Y': 100, 'Z': 1300},
+        {'X': 100, 'Y': 300, 'Z': 1300}, {'X': 300, 'Y': 300, 'Z': 1300},
+        {'X': 200, 'Y': 200, 'Z': 1000}, # Puncak
+        {'X': 200, 'Y': 100, 'Z': 1150}, {'X': 200, 'Y': 300, 'Z': 1150},
+        {'X': 100, 'Y': 200, 'Z': 1150}, {'X': 300, 'Y': 200, 'Z': 1150},
+        {'X': 150, 'Y': 150, 'Z': 1100}, {'X': 250, 'Y': 250, 'Z': 1100},
+        {'X': 150, 'Y': 250, 'Z': 1100}, {'X': 250, 'Y': 150, 'Z': 1100}
+    ]
+    st.rerun()
+
+# --- 3. PROSES DATA ---
+df = pd.DataFrame(st.session_state['data_points'])
+
+with st.expander("Lihat Tabel Data"):
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
     else:
-        return pd.read_excel(file)
+        st.info("Data kosong.")
 
-if uploaded_file is not None:
-    try:
-        df = load_data(uploaded_file)
-        st.sidebar.success("File uploaded successfully!")
-        
-        # Column mapping
-        st.sidebar.subheader("Map Columns")
-        columns = df.columns.tolist()
-        
-        col_x = st.sidebar.selectbox("X Coordinate", columns, index=0 if len(columns) > 0 else 0)
-        col_y = st.sidebar.selectbox("Y Coordinate", columns, index=1 if len(columns) > 1 else 0)
-        col_z = st.sidebar.selectbox("Z Coordinate (Depth)", columns, index=2 if len(columns) > 2 else 0)
-        col_surface = st.sidebar.selectbox("Surface Type (GOC/WOC)", columns, index=3 if len(columns) > 3 else 0)
-        
-        # Filter options
-        st.sidebar.subheader("Visualization Options")
-        show_goc = st.sidebar.checkbox("Show GOC", value=True)
-        show_woc = st.sidebar.checkbox("Show WOC", value=True)
-        
-        # Process data
-        fig = go.Figure()
-        
-        unique_surfaces = df[col_surface].unique()
-        
-        for surface_name in unique_surfaces:
-            # Determine visibility based on checkbox
-            is_visible = False
-            color = 'gray'
-            
-            if "GOC" in str(surface_name).upper():
-                is_visible = show_goc
-                color = 'red'
-            elif "WOC" in str(surface_name).upper():
-                is_visible = show_woc
-                color = 'blue'
-            else:
-                # Default for other layers if any
-                is_visible = True
-                color = 'green'
-            
-            if is_visible:
-                subset = df[df[col_surface] == surface_name]
-                
+# --- 4. VISUALISASI ---
+if not df.empty:
+    min_z, max_z = df['Z'].min(), df['Z'].max()
+    
+    st.sidebar.markdown("---")
+    st.sidebar.header("2. Setting Kontak Fluida")
+    goc_input = st.sidebar.number_input("GOC (Gas-Oil)", value=float(min_z + (max_z-min_z)*0.3))
+    woc_input = st.sidebar.number_input("WOC (Water-Oil)", value=float(min_z + (max_z-min_z)*0.7))
+
+    tab1, tab2 = st.tabs(["Peta Kontur 2D (Jelas)", "Model 3D"])
+
+    # === PERSIAPAN GRID (Interpolasi) ===
+    # Kita butuh minimal 4 titik agar interpolasi griddata berjalan lancar
+    if len(df) >= 4:
+        # 1. Bikin Grid X dan Y yang rapat (100x100 titik)
+        grid_x = np.linspace(df['X'].min(), df['X'].max(), 100)
+        grid_y = np.linspace(df['Y'].min(), df['Y'].max(), 100)
+        grid_x, grid_y = np.meshgrid(grid_x, grid_y)
+
+        # 2. Interpolasi nilai Z ke dalam Grid tersebut
+        # method='cubic' membuat garis melengkung halus
+        # method='linear' membuat garis patah-patah (lebih aman jika data sedikit)
+        try:
+            grid_z = griddata((df['X'], df['Y']), df['Z'], (grid_x, grid_y), method='cubic')
+        except:
+            # Fallback ke linear jika titik input membentuk garis lurus (collinear)
+            grid_z = griddata((df['X'], df['Y']), df['Z'], (grid_x, grid_y), method='linear')
+
+        # === PLOT 2D CONTOUR ===
+        with tab1:
+            fig_2d = go.Figure()
+
+            # A. Layer Kontur (Garis & Warna Tanah)
+            fig_2d.add_trace(go.Contour(
+                z=grid_z,
+                x=np.linspace(df['X'].min(), df['X'].max(), 100),
+                y=np.linspace(df['Y'].min(), df['Y'].max(), 100),
+                colorscale='Greys', # Pakai abu-abu biar titik warnanya menonjol
+                opacity=0.5,        # Transparan dikit
+                contours=dict(
+                    start=min_z,
+                    end=max_z,
+                    size=(max_z - min_z) / 10, # Interval kontur otomatis
+                    showlabels=True, # Tampilkan angka kedalaman di garis
+                    labelfont=dict(size=12, color='white')
+                ),
+                name='Structure Map'
+            ))
+
+            # B. Layer Titik Sumur (User Input) - Berwarna sesuai fluida
+            # Klasifikasi Fluida
+            conditions = [
+                (df['Z'] < goc_input),
+                (df['Z'] >= goc_input) & (df['Z'] <= woc_input),
+                (df['Z'] > woc_input)
+            ]
+            choices = ['Gas Cap', 'Oil Zone', 'Aquifer (Water)']
+            colors_map = {'Gas Cap': 'red', 'Oil Zone': 'green', 'Aquifer (Water)': 'blue'}
+            df['Fluid'] = np.select(conditions, choices, default='Unknown')
+
+            for fluid in choices:
+                subset = df[df['Fluid'] == fluid]
                 if not subset.empty:
-                    # Create mesh3d plot
-                    fig.add_trace(go.Mesh3d(
-                        x=subset[col_x],
-                        y=subset[col_y],
-                        z=subset[col_z],
-                        opacity=0.5,
-                        color=color,
-                        name=str(surface_name),
-                        showscale=False
-                    ))
-                    
-                    # Add scatter points for better visibility of data points
-                    fig.add_trace(go.Scatter3d(
-                        x=subset[col_x],
-                        y=subset[col_y],
-                        z=subset[col_z],
-                        mode='markers',
-                        marker=dict(size=4, color=color),
-                        name=f"{surface_name} (Points)",
-                        showlegend=False
+                    fig_2d.add_trace(go.Scatter(
+                        x=subset['X'], y=subset['Y'],
+                        mode='markers+text', # Tampilkan titik + teks
+                        text=subset['Z'].astype(int), # Tampilkan angka kedalaman
+                        textposition="top center",
+                        marker=dict(size=10, color=colors_map[fluid], line=dict(width=2, color='black')),
+                        name=fluid
                     ))
 
-        # Layout settings
-        fig.update_layout(
-            scene=dict(
-                xaxis_title=col_x,
-                yaxis_title=col_y,
-                zaxis_title=col_z,
-                aspectmode='data' # Maintain aspect ratio based on data
-            ),
-            margin=dict(l=0, r=0, b=0, t=0),
-            height=700
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show raw data
-        with st.expander("Show Raw Data"):
-            st.dataframe(df)
+            fig_2d.update_layout(
+                title="Peta Struktur Kontur & Sebaran Fluida",
+                xaxis_title="X Coordinate",
+                yaxis_title="Y Coordinate",
+                height=700
+            )
+            st.plotly_chart(fig_2d, use_container_width=True)
+            st.caption("Garis melengkung adalah kedalaman struktur (Kontur). Titik berwarna adalah sumur/input data Anda.")
 
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
+        # === PLOT 3D ===
+        with tab2:
+            fig_3d = go.Figure()
+            
+            # Plot Surface dari hasil interpolasi (Lebih halus dari Mesh3d biasa)
+            fig_3d.add_trace(go.Surface(
+                z=grid_z,
+                x=grid_x,
+                y=grid_y,
+                colorscale='Greys',
+                opacity=0.8,
+                name='Structure'
+            ))
+
+            # Plot Titik Asli
+            fig_3d.add_trace(go.Scatter3d(
+                x=df['X'], y=df['Y'], z=df['Z'],
+                mode='markers',
+                marker=dict(size=5, color='black'),
+                name='Titik Data'
+            ))
+
+            # Bidang GOC/WOC (Plane)
+            # Kita pakai range dari grid
+            x_min, x_max = df['X'].min(), df['X'].max()
+            y_min, y_max = df['Y'].min(), df['Y'].max()
+
+            def create_plane(z_lvl, color, name):
+                return go.Surface(
+                    z=z_lvl * np.ones_like(grid_z), # Bidang datar seluas grid
+                    x=grid_x,
+                    y=grid_y,
+                    colorscale=[[0, color], [1, color]],
+                    opacity=0.4,
+                    showscale=False,
+                    name=name
+                )
+
+            fig_3d.add_trace(create_plane(goc_input, 'red', 'GOC'))
+            fig_3d.add_trace(create_plane(woc_input, 'blue', 'WOC'))
+
+            fig_3d.update_layout(
+                scene=dict(
+                    xaxis_title='X', yaxis_title='Y', zaxis_title='Depth',
+                    zaxis=dict(autorange="reversed")
+                ),
+                height=700
+            )
+            st.plotly_chart(fig_3d, use_container_width=True)
+
+    else:
+        st.warning("⚠️ Masukkan minimal 4 titik data yang tersebar agar garis kontur bisa terbentuk.")
+        st.dataframe(df)
 
 else:
-    st.info("Please upload a file to get started. You can use the `sample_data.csv` provided in the project folder.")
-    
-    # Optional: Load sample data automatically if no file uploaded, for demo purposes
-    if st.button("Load Sample Data"):
-        try:
-            df = pd.read_csv("sample_data.csv")
-            # ... (Logic to render sample data would go here, but keeping it simple for now)
-            st.warning("Please upload 'sample_data.csv' manually to the sidebar to test.")
-        except:
-            st.error("Sample data not found.")
-
+    st.info("Mulai dengan memasukkan titik koordinat di sidebar.")
