@@ -3,6 +3,15 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 from scipy.interpolate import griddata
+import json
+import io
+from datetime import datetime
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="GeoViz Pro", layout="wide", page_icon="🌍")
@@ -16,6 +25,130 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# --- FUNGSI HELPER UNTUK EXPORT ---
+def create_volumetric_report_pdf(vol_gas_cap, vol_oil_zone, vol_total_res, goc_input, woc_input, 
+                                 num_points, x_range, y_range, z_range):
+    """Membuat laporan volumetrik dalam format PDF"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor('#1f77b4'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    # Title
+    story.append(Paragraph("Laporan Volumetrik Reservoir", title_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Date
+    date_str = datetime.now().strftime("%d %B %Y, %H:%M:%S")
+    story.append(Paragraph(f"<i>Dibuat pada: {date_str}</i>", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Summary
+    story.append(Paragraph("Ringkasan Perhitungan", styles['Heading2']))
+    story.append(Spacer(1, 0.1*inch))
+    
+    summary_data = [
+        ['Parameter', 'Nilai'],
+        ['Total Data Points', f"{num_points} titik"],
+        ['Gas-Oil Contact (GOC)', f"{goc_input:.2f} m"],
+        ['Water-Oil Contact (WOC)', f"{woc_input:.2f} m"],
+        ['Rentang X', f"{x_range[0]:.2f} - {x_range[1]:.2f}"],
+        ['Rentang Y', f"{y_range[0]:.2f} - {y_range[1]:.2f}"],
+        ['Rentang Z (Kedalaman)', f"{z_range[0]:.2f} - {z_range[1]:.2f} m"],
+    ]
+    
+    summary_table = Table(summary_data, colWidths=[3*inch, 3*inch])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    story.append(summary_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Volume Results
+    story.append(Paragraph("Hasil Perhitungan Volume", styles['Heading2']))
+    story.append(Spacer(1, 0.1*inch))
+    
+    volume_data = [
+        ['Zona', 'Volume (m³)', 'Volume (Juta m³)'],
+        ['Gas Cap', f"{vol_gas_cap:,.2f}", f"{vol_gas_cap/1e6:.2f}"],
+        ['Oil Zone', f"{vol_oil_zone:,.2f}", f"{vol_oil_zone/1e6:.2f}"],
+        ['Total Reservoir', f"{vol_total_res:,.2f}", f"{vol_total_res/1e6:.2f}"],
+    ]
+    
+    volume_table = Table(volume_data, colWidths=[2*inch, 2*inch, 2*inch])
+    volume_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey])
+    ]))
+    story.append(volume_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Notes
+    story.append(Paragraph("Catatan:", styles['Heading3']))
+    story.append(Paragraph(
+        "• Volume dihitung berdasarkan Gross Rock Volume (GRV) menggunakan metode grid interpolation.<br/>"
+        "• Gas Cap: Volume batuan di atas GOC<br/>"
+        "• Oil Zone: Volume batuan antara GOC dan WOC<br/>"
+        "• Total Reservoir: Volume batuan di atas WOC",
+        styles['Normal']
+    ))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+def create_volumetric_report_excel(vol_gas_cap, vol_oil_zone, vol_total_res, goc_input, woc_input,
+                                   num_points, x_range, y_range, z_range, df):
+    """Membuat laporan volumetrik dalam format Excel"""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        # Sheet 1: Summary
+        summary_df = pd.DataFrame({
+            'Parameter': ['Total Data Points', 'GOC (m)', 'WOC (m)', 
+                         'X Min', 'X Max', 'Y Min', 'Y Max', 'Z Min (m)', 'Z Max (m)'],
+            'Nilai': [num_points, goc_input, woc_input,
+                     x_range[0], x_range[1], y_range[0], y_range[1], z_range[0], z_range[1]]
+        })
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        
+        # Sheet 2: Volume Results
+        volume_df = pd.DataFrame({
+            'Zona': ['Gas Cap', 'Oil Zone', 'Total Reservoir'],
+            'Volume (m³)': [vol_gas_cap, vol_oil_zone, vol_total_res],
+            'Volume (Juta m³)': [vol_gas_cap/1e6, vol_oil_zone/1e6, vol_total_res/1e6]
+        })
+        volume_df.to_excel(writer, sheet_name='Volume Results', index=False)
+        
+        # Sheet 3: Raw Data
+        df.to_excel(writer, sheet_name='Raw Data', index=False)
+    
+    buffer.seek(0)
+    return buffer
 
 # --- JUDUL UTAMA ---
 st.title("🌍 3D Reservoir Visualization")
@@ -76,7 +209,7 @@ with st.sidebar:
             st.warning("⚠️ Awas: GOC > WOC!")
     
     st.markdown("---")
-        # upload file
+    # upload file
     with st.expander("📂 Upload File", expanded=True):
         uploaded_file = st.file_uploader("Upload CSV/Excel (Wajib: X, Y, Z)", type=["csv", "xlsx"])
         
@@ -124,6 +257,39 @@ with st.sidebar:
                 {'X': 150, 'Y': 250, 'Z': 1100}, {'X': 250, 'Y': 150, 'Z': 1100}
             ]
             st.rerun()
+    
+    # --- BAGIAN E: EXPORT & DOWNLOAD ---
+    with st.expander("💾 Export & Download", expanded=False):
+        st.markdown("### 📤 Export Data & Visualisasi")
+        
+        # Save/Load Session State
+        st.markdown("#### 💿 Session Management")
+        col_save1, col_save2 = st.columns(2)
+        
+        with col_save1:
+            session_json = json.dumps(st.session_state['data_points'], indent=2)
+            st.download_button(
+                label="💾 Save Session",
+                data=session_json,
+                file_name=f"reservoir_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                help="Simpan data session untuk digunakan kembali"
+            )
+        
+        with col_save2:
+            uploaded_session = st.file_uploader("📂 Load Session", type=["json"], key="session_upload")
+            if uploaded_session is not None:
+                try:
+                    session_data = json.load(uploaded_session)
+                    if isinstance(session_data, list) and all('X' in item and 'Y' in item and 'Z' in item for item in session_data):
+                        if st.button("📥 Muat Session", key="load_session"):
+                            st.session_state['data_points'] = session_data
+                            st.toast("Session berhasil dimuat!", icon='✅')
+                            st.rerun()
+                    else:
+                        st.error("Format session tidak valid!")
+                except Exception as e:
+                    st.error(f"Error membaca session: {e}")
 
 # --- 3. LOGIC VISUALISASI UTAMA ---
 if df.empty:
@@ -184,6 +350,66 @@ else:
         col_vol3.metric("🔵 Total Reservoir", fmt_vol(vol_total_res), 
                         help=f"Total volume batuan di atas kedalaman {woc_input} m")
         
+        # --- EXPORT LAPORAN VOLUMETRIK ---
+        st.markdown("### 📄 Export Laporan Volumetrik")
+        col_exp1, col_exp2, col_exp3 = st.columns(3)
+        
+        with col_exp1:
+            # Export PDF
+            try:
+                pdf_buffer = create_volumetric_report_pdf(
+                    vol_gas_cap, vol_oil_zone, vol_total_res, goc_input, woc_input,
+                    len(df), (df['X'].min(), df['X'].max()), 
+                    (df['Y'].min(), df['Y'].max()), (df['Z'].min(), df['Z'].max())
+                )
+                st.download_button(
+                    label="📄 Download PDF Report",
+                    data=pdf_buffer,
+                    file_name=f"volumetric_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    help="Download laporan volumetrik dalam format PDF"
+                )
+            except Exception as e:
+                st.error(f"Error membuat PDF: {e}")
+        
+        with col_exp2:
+            # Export Excel
+            try:
+                excel_buffer = create_volumetric_report_excel(
+                    vol_gas_cap, vol_oil_zone, vol_total_res, goc_input, woc_input,
+                    len(df), (df['X'].min(), df['X'].max()), 
+                    (df['Y'].min(), df['Y'].max()), (df['Z'].min(), df['Z'].max()), df
+                )
+                st.download_button(
+                    label="📊 Download Excel Report",
+                    data=excel_buffer,
+                    file_name=f"volumetric_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Download laporan volumetrik dalam format Excel"
+                )
+            except Exception as e:
+                st.error(f"Error membuat Excel: {e}")
+        
+        with col_exp3:
+            # Export Grid Data CSV
+            try:
+                # Buat DataFrame dari grid interpolasi
+                grid_df = pd.DataFrame({
+                    'X': grid_x.flatten(),
+                    'Y': grid_y.flatten(),
+                    'Z': grid_z.flatten()
+                })
+                grid_csv = grid_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Grid Data (CSV)",
+                    data=grid_csv,
+                    file_name=f"grid_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Download data grid hasil interpolasi"
+                )
+            except Exception as e:
+                st.error(f"Error membuat CSV: {e}")
+        
         # --- TABS VISUALISASI ---
         tab1, tab2, tab3 = st.tabs(["🗺️ Peta Kontur 2D", "🧊 Model 3D", "📋 Data Mentah"])
 
@@ -223,6 +449,35 @@ else:
             fig_2d.update_layout(height=650, margin=dict(l=20, r=20, t=40, b=20),
                                 xaxis_title="X Coordinate", yaxis_title="Y Coordinate")
             st.plotly_chart(fig_2d, use_container_width=True)
+            
+            # Export 2D Visualization
+            st.markdown("#### 📤 Export Visualisasi 2D")
+            col_2d1, col_2d2 = st.columns(2)
+            with col_2d1:
+                try:
+                    img_2d_png = fig_2d.to_image(format="png", width=1200, height=800)
+                    st.download_button(
+                        label="🖼️ Download PNG",
+                        data=img_2d_png,
+                        file_name=f"contour_2d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                        mime="image/png",
+                        help="Download visualisasi 2D sebagai PNG"
+                    )
+                except Exception as e:
+                    st.error(f"Error export PNG: {e}")
+            
+            with col_2d2:
+                try:
+                    img_2d_pdf = fig_2d.to_image(format="pdf", width=1200, height=800)
+                    st.download_button(
+                        label="📄 Download PDF",
+                        data=img_2d_pdf,
+                        file_name=f"contour_2d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        help="Download visualisasi 2D sebagai PDF"
+                    )
+                except Exception as e:
+                    st.error(f"Error export PDF: {e}")
 
         # === TAB 2: 3D ===
         with tab2:
@@ -252,9 +507,67 @@ else:
                 height=650, margin=dict(l=0, r=0, b=0, t=0)
             )
             st.plotly_chart(fig_3d, use_container_width=True)
+            
+            # Export 3D Visualization
+            st.markdown("#### 📤 Export Visualisasi 3D")
+            col_3d1, col_3d2 = st.columns(2)
+            with col_3d1:
+                try:
+                    img_3d_png = fig_3d.to_image(format="png", width=1200, height=800)
+                    st.download_button(
+                        label="🖼️ Download PNG",
+                        data=img_3d_png,
+                        file_name=f"model_3d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                        mime="image/png",
+                        help="Download visualisasi 3D sebagai PNG"
+                    )
+                except Exception as e:
+                    st.error(f"Error export PNG: {e}")
+            
+            with col_3d2:
+                try:
+                    img_3d_pdf = fig_3d.to_image(format="pdf", width=1200, height=800)
+                    st.download_button(
+                        label="📄 Download PDF",
+                        data=img_3d_pdf,
+                        file_name=f"model_3d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        help="Download visualisasi 3D sebagai PDF"
+                    )
+                except Exception as e:
+                    st.error(f"Error export PDF: {e}")
 
         with tab3:
             st.dataframe(df, use_container_width=True)
+            
+            # Export Raw Data
+            st.markdown("#### 📤 Export Data Mentah")
+            col_raw1, col_raw2 = st.columns(2)
+            with col_raw1:
+                csv_data = df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv_data,
+                    file_name=f"raw_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Download data mentah sebagai CSV"
+                )
+            
+            with col_raw2:
+                try:
+                    excel_buffer_raw = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer_raw, engine='openpyxl') as writer:
+                        df.to_excel(writer, sheet_name='Raw Data', index=False)
+                    excel_buffer_raw.seek(0)
+                    st.download_button(
+                        label="📊 Download Excel",
+                        data=excel_buffer_raw,
+                        file_name=f"raw_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Download data mentah sebagai Excel"
+                    )
+                except Exception as e:
+                    st.error(f"Error export Excel: {e}")
 
     else:
         st.warning("⚠️ Data belum cukup untuk membuat kontur. Masukkan minimal 4 titik yang menyebar.")
