@@ -19,7 +19,7 @@ st.markdown("""
 
 # --- JUDUL UTAMA ---
 st.title("🌍 3D Reservoir Visualization")
-st.markdown("**Interactive Structural Map & Fluid Contact Modeler**")
+st.markdown("*Interactive Structural Map, Fluid Contact & Reserves Calculator*")
 
 # --- 1. INISIALISASI SESSION STATE ---
 if 'data_points' not in st.session_state:
@@ -27,7 +27,7 @@ if 'data_points' not in st.session_state:
 
 # --- 2. SIDEBAR KEREN ---
 with st.sidebar:
-    st.header("🛠️ Panel Input")
+    st.header("🛠 Panel Input")
     # --- BAGIAN A: INPUT DATA ---
     st.markdown("### 📍 Input Koordinat")
     
@@ -66,14 +66,24 @@ with st.sidebar:
         min_z, max_z = df['Z'].min(), df['Z'].max()
         
         # Input GOC & WOC dengan warna visual
-        st.markdown("**:red[Gas-Oil Contact (GOC)]**")
+        st.markdown(":red[Gas-Oil Contact (GOC)]")
         goc_input = st.number_input("", value=float(min_z + (max_z-min_z)*0.3), key="goc", label_visibility="collapsed")
         
-        st.markdown("**:blue[Water-Oil Contact (WOC)]**")
+        st.markdown(":blue[Water-Oil Contact (WOC)]")
         woc_input = st.number_input("", value=float(min_z + (max_z-min_z)*0.7), key="woc", label_visibility="collapsed")
         
         if goc_input > woc_input:
-            st.warning("⚠️ Awas: GOC > WOC!")
+            st.warning("⚠ Awas: GOC > WOC!")
+
+        # --- [BAGIAN BARU] INPUT PETROFISIKA UNTUK HITUNG CADANGAN ---
+        st.divider()
+        with st.expander("🧮 Parameter Petrofisika (Baru)", expanded=True):
+            st.caption("Digunakan untuk menghitung STOIIP/GIIP")
+            porosity = st.slider("Porositas (ϕ)", 0.05, 0.40, 0.20, 0.01)
+            sw = st.slider("Water Saturation (Sw)", 0.1, 1.0, 0.3, 0.05)
+            ntg = st.slider("Net-to-Gross (NTG)", 0.1, 1.0, 0.8, 0.05)
+            bo = st.number_input("Faktor Vol. Formasi Minyak (Bo)", 1.0, 2.0, 1.2)
+            bg = st.number_input("Faktor Ekspansi Gas (Bg)", 0.001, 0.1, 0.005, format="%.4f")
     
     st.markdown("---")
         # upload file
@@ -108,7 +118,7 @@ with st.sidebar:
                 st.error(f"Error membaca file: {e}")
 
     # --- BAGIAN D: UTILITAS (Disembunyikan di Expander) ---
-    with st.expander("⚙️ Pengaturan Data", expanded=False):
+    with st.expander("⚙ Pengaturan Data", expanded=False):
         if st.button("🔄 Reset Semua Data"):
             st.session_state['data_points'] = []
             st.rerun()
@@ -145,7 +155,7 @@ else:
 
 
         # --- FITUR PERHITUNGAN VOLUME (VOLUMETRICS) ---
-        st.markdown("### 📊 Estimasi Volume (Gross Rock Volume)")
+        st.markdown("### 📊 Estimasi Volume & Cadangan")
         
         # 1. Hitung dimensi sel grid
         x_min, x_max = df['X'].min(), df['X'].max()
@@ -157,7 +167,6 @@ else:
         cell_area = dx * dy  # Luas per satu kotak grid
         
         # 2. Hitung Volume di atas WOC (Total Reservoir Potensial)
-        # Rumus: (WOC - Depth). Jika Depth > WOC (di bawah kontak), tebal = 0.
         thick_above_woc = woc_input - grid_z
         thick_above_woc[thick_above_woc < 0] = 0  # Filter yang di bawah WOC
         vol_total_res = np.nansum(thick_above_woc) * cell_area
@@ -170,22 +179,30 @@ else:
         # 4. Hitung Volume Oil (Selisih Total - Gas)
         vol_oil_zone = max(0, vol_total_res - vol_gas_cap)
 
-        # 5. Tampilkan Metrics
+        # --- [BAGIAN BARU] HITUNG STOIIP & GIIP ---
+        # Rumus: GRV * NTG * Porosity * (1-Sw) / Bo
+        stoiip = (vol_oil_zone * ntg * porosity * (1 - sw)) / bo
+        giip = (vol_gas_cap * ntg * porosity * (1 - sw)) / bg
+
+        # 5. Tampilkan Metrics (Gross Rock Volume)
         col_vol1, col_vol2, col_vol3 = st.columns(3)
         
         # Helper untuk format juta (Million)
-        def fmt_vol(v):
-            return f"{v/1e6:.2f} Juta m³"
+        def fmt_vol(v): return f"{v/1e6:.2f} Juta m³"
 
-        col_vol1.metric("🔴 Volume Gas Cap", fmt_vol(vol_gas_cap), 
-                        help=f"Volume batuan di atas kedalaman {goc_input} m")
-        col_vol2.metric("🟢 Volume Oil Zone", fmt_vol(vol_oil_zone), 
-                        help="Volume batuan di antara GOC dan WOC")
-        col_vol3.metric("🔵 Total Reservoir", fmt_vol(vol_total_res), 
-                        help=f"Total volume batuan di atas kedalaman {woc_input} m")
+        col_vol1.metric("🔴 Gross Gas Volume", fmt_vol(vol_gas_cap), help="Volume batuan gas cap")
+        col_vol2.metric("🟢 Gross Oil Volume", fmt_vol(vol_oil_zone), help="Volume batuan oil zone")
+        col_vol3.metric("🔵 Total Reservoir", fmt_vol(vol_total_res), help="Total volume batuan reservoir")
+
+        # --- [BAGIAN BARU] METRICS CADANGAN ---
+        st.caption("Ekspektasi Cadangan Minyak & Gas (In-Place):")
+        c_res1, c_res2 = st.columns(2)
+        c_res1.metric("🔥 GIIP (Gas In Place)", f"{giip/1e9:.2f} BCF", help="Miliar Kaki Kubik")
+        c_res2.metric("🛢 STOIIP (Oil In Place)", f"{stoiip/1e6:.2f} MMbbls", help="Juta Barel Minyak")
+
         
-        # --- TABS VISUALISASI ---
-        tab1, tab2, tab3 = st.tabs(["🗺️ Peta Kontur 2D", "🧊 Model 3D", "📋 Data Mentah"])
+        # --- [DIUPDATE] TABS VISUALISASI DITAMBAH 1 ---
+        tab1, tab2, tab3, tab4 = st.tabs(["🗺 Peta Kontur 2D", "🧊 Model 3D", "📋 Data Mentah", "✂ Penampang (Baru)"])
 
         # === TAB 1: 2D ===
         with tab1:
@@ -224,12 +241,16 @@ else:
                                 xaxis_title="X Coordinate", yaxis_title="Y Coordinate")
             st.plotly_chart(fig_2d, use_container_width=True)
 
-        # === TAB 2: 3D ===
+        # === TAB 2: 3D [DIUPDATE: WARNA & TIANG SUMUR] ===
         with tab2:
             fig_3d = go.Figure()
             
-            # Surface Tanah
-            fig_3d.add_trace(go.Surface(z=grid_z, x=grid_x, y=grid_y, colorscale='Greys', opacity=0.8, name='Structure'))
+            # Surface Tanah (Warna dirubah jadi Earth_r biar keren)
+            fig_3d.add_trace(go.Surface(
+                z=grid_z, x=grid_x, y=grid_y, 
+                colorscale='Earth_r', # Ganti warna
+                opacity=0.9, name='Structure'
+            ))
             
             # Plane GOC/WOC
             def create_plane(z_lvl, color, name):
@@ -241,11 +262,13 @@ else:
             fig_3d.add_trace(create_plane(goc_input, 'red', 'GOC'))
             fig_3d.add_trace(create_plane(woc_input, 'blue', 'WOC'))
 
-            # Titik Sumur 3D
-            fig_3d.add_trace(go.Scatter3d(
-                x=df['X'], y=df['Y'], z=df['Z'], mode='markers',
-                marker=dict(size=4, color='black'), name='Wells'
-            ))
+            # [BARU] Loop untuk membuat garis sumur (stick)
+            for i, row in df.iterrows():
+                fig_3d.add_trace(go.Scatter3d(
+                    x=[row['X'], row['X']], y=[row['Y'], row['Y']], z=[min_z, row['Z']], # Garis dari atas ke titik
+                    mode='lines+markers', marker=dict(size=3, color='black'), line=dict(color='black', width=4),
+                    showlegend=False
+                ))
 
             fig_3d.update_layout(
                 scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Depth', zaxis=dict(autorange="reversed")),
@@ -256,6 +279,33 @@ else:
         with tab3:
             st.dataframe(df, use_container_width=True)
 
+        # === [TAB BARU] TAB 4: CROSS SECTION ===
+        with tab4:
+            
+
+            st.markdown("##### ✂ Penampang Melintang (Cross-Section)")
+            st.caption("Geser slider untuk memotong peta dari Barat ke Timur pada posisi Y tertentu.")
+            
+            # Slider pemilihan irisan Y
+            slice_y = st.slider("Pilih Posisi Irisan Y", float(y_min), float(y_max), float((y_min+y_max)/2))
+            
+            # Logic mengambil data irisan
+            idx_y = (np.abs(grid_y[:, 0] - slice_y)).argmin() # Cari index grid Y terdekat
+            z_profile = grid_z[idx_y, :] # Ambil profil Z sepanjang X
+            
+            fig_xs = go.Figure()
+            
+            # Gambar Profil Tanah
+            fig_xs.add_trace(go.Scatter(x=grid_x[0, :], y=z_profile, mode='lines', fill='tozeroy', line=dict(color='brown'), name='Top Structure'))
+            
+            # Gambar Garis Kontak Fluida
+            fig_xs.add_hline(y=goc_input, line_dash="dash", line_color="red", annotation_text="GOC")
+            fig_xs.add_hline(y=woc_input, line_dash="dash", line_color="blue", annotation_text="WOC")
+            
+            fig_xs.update_yaxes(autorange="reversed", title="Depth (m)")
+            fig_xs.update_layout(title=f"Irisan pada Y = {slice_y:.1f}", xaxis_title="X Coordinate", height=500)
+            st.plotly_chart(fig_xs, use_container_width=True)
+
     else:
-        st.warning("⚠️ Data belum cukup untuk membuat kontur. Masukkan minimal 4 titik yang menyebar.")
+        st.warning("⚠ Data belum cukup untuk membuat kontur. Masukkan minimal 4 titik yang menyebar.")
         st.dataframe(df, use_container_width=True)
