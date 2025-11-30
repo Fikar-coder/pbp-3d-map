@@ -14,6 +14,7 @@
 -   [Imam Khusain - 123230018]
 -   [Adi Setya N.P - 123230026]
 -   [Bintang Jati Kesuma S - 123230075]
+-   [Nisrina Salsabila - 123230004]
 
 **Peta Struktur Interaktif & Pemodelan Kontak Fluida**
 

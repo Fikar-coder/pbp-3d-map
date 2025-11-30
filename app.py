@@ -159,7 +159,7 @@ def create_volumetric_report_excel(vol_gas_cap, vol_oil_zone, vol_total_res,
 
 # --- JUDUL UTAMA ---
 st.title("🌍 3D Reservoir Visualization")
-st.markdown("*Interactive Structural Map, Fluid Contact & Reserves Calculator*")
+st.markdown("Interactive Structural Map, Fluid Contact & Reserves Calculator")
 
 # --- 1. INISIALISASI SESSION STATE ---
 if 'data_points' not in st.session_state:
