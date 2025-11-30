@@ -281,6 +281,15 @@ with st.sidebar:
                 {'X': 150, 'Y': 250, 'Z': 1100}, {'X': 250, 'Y': 150, 'Z': 1100}
             ]
             st.rerun()
+            
+        # --- Hapus titik terakhir ---
+        if st.button("➖ Hapus Titik Terakhir"):
+            if len(st.session_state['data_points']) > 0:
+                removed = st.session_state['data_points'].pop()
+                st.toast(f"Titik terakhir {removed} dihapus.", icon="🗑️")
+                st.rerun()
+            else:
+                st.warning("Tidak ada titik untuk dihapus.")
     
     # --- EXPORT & SESSION MANAGEMENT ---
     with st.expander("💾 Export & Session", expanded=False):
