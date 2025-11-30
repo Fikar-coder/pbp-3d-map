@@ -17,7 +17,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="GeoViz Pro", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="Pemetaan Bawah Permukaan IF-A", layout="wide", page_icon="🌍")
 
 # CSS Custom untuk sedikit mempercantik tampilan
 st.markdown("""
