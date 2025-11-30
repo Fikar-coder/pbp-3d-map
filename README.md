@@ -16,6 +16,7 @@
 -   [Bintang Jati Kesuma S - 123230075]
 -   [Nisrina Salsabila - 123230004]
 -   [Muhammad Daffa - 123230203]
+-   [Muhammad Diyan Alkautsar - 123230019]
 
 **Peta Struktur Interaktif & Pemodelan Kontak Fluida**
 
